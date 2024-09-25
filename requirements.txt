@@ -3,4 +3,3 @@ diffusers
 pillow
 gradio
 safetensors
-tf-saliency
