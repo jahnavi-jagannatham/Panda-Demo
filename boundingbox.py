@@ -57,47 +57,39 @@ class Boundingbox:
         self.grid_centers = []
         self.merged_boxes = []
 
-    def find_highest_points_with_grids(self, num_grids=10):
+    def find_highest_points_with_grids(self, num_grids):
         """
-        Identifies the highest points in the heatmap by dividing it into grids and selecting
-        the grid centers with the highest values. The selected points are then marked, and
-        their surrounding grid is excluded from further analysis.
-
+        Finds the highest points in the heatmap using grids and marks the regions as -inf.
+        
         Parameters:
         -----------
-        num_grids : int, optional
-            The number of grid centers to identify (default is 10).
-
+        num_grids : int
+            The number of grids to divide the heatmap into.
+        
         Returns:
         --------
-        list of dict
-            A list of dictionaries containing the x and y coordinates of the identified grid centers.
+        grid_centers : list
+            A list of grid centers with the highest values.
         """
-        processed_heatmap = np.copy(self.heatmap)
-
-        for _ in range(num_grids):
-            # Find the maximum value in the heatmap
-            max_index = np.unravel_index(np.argmax(processed_heatmap), processed_heatmap.shape)
-            max_value = processed_heatmap[max_index]
-
-            # Stop if no valid points are left
-            if max_value == -np.inf:
-                break
-
-            # Store the grid center
-            self.grid_centers.append(max_index)
-
-            # Define the grid boundaries and set the grid area to -inf to prevent reselection
-            x, y = max_index
+        processed_heatmap = np.array(self.heatmap, dtype=np.float32)  # Ensure heatmap is float32
+        grid_centers = []
+    
+        for i in range(num_grids):
+            # Find the highest point in the current heatmap
+            max_idx = np.unravel_index(np.argmax(processed_heatmap), processed_heatmap.shape)
+            grid_centers.append({'x': max_idx[1], 'y': max_idx[0]})
+    
+            # Mask the area around the found highest point with -inf to avoid selecting it again
+            x, y = max_idx
             x_start = max(0, x - self.half_grid_size)
             x_end = min(processed_heatmap.shape[0], x + self.half_grid_size + 1)
             y_start = max(0, y - self.half_grid_size)
             y_end = min(processed_heatmap.shape[1], y + self.half_grid_size + 1)
-            processed_heatmap[x_start:x_end, y_start:y_end] = -np.inf
-
+            processed_heatmap[x_start:x_end, y_start:y_end] = -np.inf  # Now safe to assign -inf
+    
         # Convert grid centers to a list of dictionaries with 'x' and 'y' keys
-        grid_centers_json = [{'x': center[1], 'y': center[0]} for center in self.grid_centers]
-        return grid_centers_json
+        return grid_centers
+
 
     def merge_overlapping_boxes(self):
         """
