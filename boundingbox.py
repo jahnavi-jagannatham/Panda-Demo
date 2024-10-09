@@ -1,177 +1,113 @@
-"""Official Bounding Box file"""
-
+import cv2
 import numpy as np
-import matplotlib.pyplot as P
-import matplotlib.patches as patches
+import matplotlib.pyplot as plt
 
-class Boundingbox:
+class BoundingBoxFinder:
     """
-    A class for analyzing heatmaps by dividing them into grids, identifying the highest points within these grids,
-    and merging overlapping regions. The class also provides methods to plot the heatmap with the identified grids.
-
-    Attributes:
-    -----------
-    heatmap : numpy.ndarray
-        The input heatmap to be analyzed.
-    grid_fraction : float
-        The fraction of the heatmap's size used to determine the grid size.
-    grid_size : int
-        The size of each grid based on the heatmap's dimensions and grid fraction.
-    half_grid_size : int
-        Half the size of the grid, used for calculating grid boundaries.
-    grid_centers : list
-        A list to store the centers of identified grids with the highest heatmap values.
-    merged_boxes : list
-        A list to store merged bounding boxes that encompass overlapping grid regions.
-
-    Methods:
-    --------
-    find_highest_points_with_grids(num_grids=10):
-        Identifies and returns the centers of grids with the highest values in the heatmap.
-    
-    merge_overlapping_boxes():
-        Merges overlapping grid boxes and returns the merged boxes as a list of dictionaries.
-
-    non_max_suppression(threshold=0.6):
-        Applies Non-Maximal Suppression (NMS) to merge overlapping boxes based on a specified IoU threshold.
-
-    plot_heatmap_with_grids():
-        Plots the heatmap and overlays rectangles representing the merged grid boxes.
+    A class for detecting common regions in multiple images and finding bounding boxes
+    for the common regions.
     """
 
-    def __init__(self, heatmap, grid_fraction=1/8):
+    def __init__(self, image_list):
         """
-        Initializes the HeatmapGridAnalyzer class by setting up the heatmap and grid parameters.
+        Initializes the class with the list of image paths.
 
         Parameters:
         -----------
-        heatmap : numpy.ndarray
-            The input heatmap to be analyzed.
-        grid_fraction : float, optional
-            The fraction of the heatmap's size used to determine the grid size (default is 1/8).
+        image_list : list
+            A list of image file paths.
         """
-        self.heatmap = heatmap
-        self.grid_fraction = grid_fraction
-        self.grid_size = int(heatmap.shape[0] * grid_fraction)
-        self.half_grid_size = self.grid_size // 2
-        self.grid_centers = []
-        self.merged_boxes = []
+        self.image_list = image_list
+        self.images = self.load_images()
 
-    def find_highest_points_with_grids(self, num_grids):
-        """
-        Finds the highest points in the heatmap using grids and marks the regions as -inf.
-        
-        Parameters:
-        -----------
-        num_grids : int
-            The number of grids to divide the heatmap into.
-        
-        Returns:
-        --------
-        grid_centers : list
-            A list of grid centers with the highest values.
-        """
-        processed_heatmap = np.array(self.heatmap, dtype=np.float32)  # Ensure heatmap is float32
-        grid_centers = []
-    
-        for i in range(num_grids):
-            # Find the highest point in the current heatmap
-            max_idx = np.unravel_index(np.argmax(processed_heatmap), processed_heatmap.shape)
-            grid_centers.append({'x': max_idx[1], 'y': max_idx[0]})
-    
-            # Mask the area around the found highest point with -inf to avoid selecting it again
-            x, y = max_idx
-            x_start = max(0, x - self.half_grid_size)
-            x_end = min(processed_heatmap.shape[0], x + self.half_grid_size + 1)
-            y_start = max(0, y - self.half_grid_size)
-            y_end = min(processed_heatmap.shape[1], y + self.half_grid_size + 1)
-            processed_heatmap[x_start:x_end, y_start:y_end] = -np.inf  # Now safe to assign -inf
-    
-        # Convert grid centers to a list of dictionaries with 'x' and 'y' keys
-        return grid_centers
+    def load_images(self):
+        """Loads images from the file paths and returns a list of image arrays."""
+        images = []
+        for img_path in self.image_list:
+            img = cv2.imread(img_path)
+            if img is not None:
+                images.append(img)
+            else:
+                print(f"Error loading image: {img_path}")
+        return images
 
-
-    def merge_overlapping_boxes(self):
+    def find_common_regions(self):
         """
-        Merges overlapping grid boxes based on their bounding coordinates. Each grid box is defined by
-        its center and half-grid size. Overlapping boxes are merged into a single bounding box.
+        Finds the common regions between the loaded images and returns a list of bounding box coordinates.
 
         Returns:
         --------
-        list of dict
-            A list of dictionaries representing the merged bounding boxes with keys 'x1', 'y1', 'x2', and 'y2'.
+        list of tuples:
+            A list of tuples, each containing (x, y, w, h) as the bounding box coordinates.
         """
-        self.merged_boxes = []
-        for center in self.grid_centers:
-            x, y = center
-            # Define the bounding box for the current grid
-            new_box = [y - self.half_grid_size, x - self.half_grid_size, y + self.half_grid_size, x + self.half_grid_size]
-            merged = False
+        if len(self.images) < 2:
+            raise ValueError("At least two images are required for finding common regions.")
 
-            # Check for overlaps with existing boxes and merge if necessary
-            for box in self.merged_boxes:
-                if not (new_box[2] < box[0] or new_box[0] > box[2] or new_box[3] < box[1] or new_box[1] > box[3]):
-                    box[0] = min(box[0], new_box[0])
-                    box[1] = min(box[1], new_box[1])
-                    box[2] = max(box[2], new_box[2])
-                    box[3] = max(box[3], new_box[3])
-                    merged = True
-                    break
+        # Convert images to grayscale for comparison
+        gray_images = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in self.images]
 
-            # If no overlap, add the new box to the list
-            if not merged:
-                self.merged_boxes.append(new_box)
+        # Initialize common_region with the first image
+        common_region = gray_images[0]
 
-        # Convert merged boxes to a list of dictionaries with 'x1', 'y1', 'x2', and 'y2' keys
-        merged_boxes_json = [{'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3]} for box in self.merged_boxes]
-        return merged_boxes_json
+        # Find the common region by performing bitwise AND with subsequent images
+        for gray_img in gray_images[1:]:
+            common_region = cv2.bitwise_and(common_region, gray_img)
 
-    def non_max_suppression(self, threshold=0.25):
+        # Find contours in the common region to identify all bounding boxes
+        contours, _ = cv2.findContours(common_region, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        bounding_boxes = []
+        for contour in contours:
+            if cv2.contourArea(contour) > 0:  # Filter out small contours
+                x, y, w, h = cv2.boundingRect(contour)
+                bounding_boxes.append((x, y, w, h))
+
+        return bounding_boxes
+
+    def non_max_suppression(self, boxes, threshold=0.3):
         """
-        Applies Non-Maximal Suppression (NMS) to merge overlapping boxes based on a specified Intersection over Union (IoU) threshold.
+        Applies Non-Maximum Suppression to eliminate overlapping bounding boxes.
 
         Parameters:
         -----------
-        threshold : float, optional
-            The IoU threshold for merging boxes (default is 0.25).
+        boxes : list of tuples
+            A list of bounding boxes (x, y, w, h).
+        threshold : float
+            The threshold for IoU to consider boxes as overlapping.
 
         Returns:
         --------
-        list of dict
-            A list of dictionaries representing the merged bounding boxes after applying NMS with keys 'x1', 'y1', 'x2', and 'y2'.
+        list of tuples:
+            The remaining bounding boxes after applying NMS.
         """
-        if not self.grid_centers:
+        if len(boxes) == 0:
             return []
 
-        # First, find and merge overlapping boxes
-        self.merge_overlapping_boxes()
+        # Convert bounding boxes to a numpy array
+        boxes_array = np.array(boxes)
+        x1 = boxes_array[:, 0]
+        y1 = boxes_array[:, 1]
+        x2 = boxes_array[:, 0] + boxes_array[:, 2]
+        y2 = boxes_array[:, 1] + boxes_array[:, 3]
 
-        boxes = np.array(self.merged_boxes)
-
-        # Coordinates of the boxes
-        y1 = boxes[:, 0]
-        x1 = boxes[:, 1]
-        y2 = boxes[:, 2]
-        x2 = boxes[:, 3]
-
-        # Compute the area of the boxes and sort by the bottom-right y-coordinate of the box
-        areas = (y2 - y1 + 1) * (x2 - x1 + 1)
+        # Compute the area of the bounding boxes
+        areas = (x2 - x1) * (y2 - y1)
         order = areas.argsort()[::-1]
 
         keep = []
-        while order.size > 0:
+        while len(order) > 0:
             i = order[0]
             keep.append(i)
 
-            # Compute the coordinates of the intersection boxes
+            # Compute the intersection coordinates
             xx1 = np.maximum(x1[i], x1[order[1:]])
             yy1 = np.maximum(y1[i], y1[order[1:]])
             xx2 = np.minimum(x2[i], x2[order[1:]])
             yy2 = np.minimum(y2[i], y2[order[1:]])
 
-            # Compute the width and height of the intersection box
-            w = np.maximum(0, xx2 - xx1 + 1)
-            h = np.maximum(0, yy2 - yy1 + 1)
+            # Compute the width and height of the intersection boxes
+            w = np.maximum(0, xx2 - xx1)
+            h = np.maximum(0, yy2 - yy1)
 
             # Compute the ratio of overlap (IoU)
             inter = w * h
@@ -181,31 +117,102 @@ class Boundingbox:
             inds = np.where(iou <= threshold)[0]
             order = order[inds + 1]
 
-        self.merged_boxes = boxes[keep].tolist()
+        return boxes_array[keep].tolist()
 
-        # Convert merged boxes to a list of dictionaries with 'x1', 'y1', 'x2', and 'y2' keys
-        merged_boxes_json = [{'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3]} for box in self.merged_boxes]
-        return merged_boxes_json
-
-    def plot_heatmap_with_grids(self):
+    def get_top_bounding_boxes(self, bounding_boxes, max_boxes=5):
         """
-        Plots the heatmap and overlays rectangles representing the merged grid boxes. Each box is
-        drawn with a blue border and no fill, highlighting the areas of interest within the heatmap.
+        Returns the top bounding boxes based on their area after applying NMS.
 
-        The plot is displayed using matplotlib.
+        Parameters:
+        -----------
+        bounding_boxes : list
+            A list of bounding box tuples (x, y, w, h).
+        max_boxes : int
+            The maximum number of bounding boxes to return.
 
         Returns:
         --------
-        None
+        list of tuples:
+            A list of the top bounding boxes sorted by area.
         """
-        fig, ax = P.subplots()
-        cax = ax.imshow(self.heatmap, cmap='hot', interpolation='nearest')
-        fig.colorbar(cax)
+        # Apply Non-Maximum Suppression to remove overlapping boxes
+        non_overlapping_boxes = self.non_max_suppression(bounding_boxes)
 
-        # Draw rectangles for each merged box
-        for box in self.merged_boxes:
-            rect = patches.Rectangle((box[0], box[1]), box[2] - box[0], box[3] - box[1],
-                                     linewidth=1, edgecolor='blue', facecolor='none')
-            ax.add_patch(rect)
+        # Sort bounding boxes by area (width * height)
+        non_overlapping_boxes.sort(key=lambda box: box[2] * box[3], reverse=True)
+        
+        # Return the top N bounding boxes
+        return non_overlapping_boxes[:max_boxes]
 
-        # P.show()
+    def get_bounding_box_on_image(self, image, bbox):
+        """
+        Draws a bounding box on the provided image.
+
+        Parameters:
+        -----------
+        image : numpy.ndarray
+            The image on which to draw the bounding box.
+        bbox : tuple
+            A tuple containing the bounding box coordinates (x, y, w, h).
+
+        Returns:
+        --------
+        numpy.ndarray:
+            The image with the bounding box drawn on it.
+        """
+        x, y, w, h = bbox
+        img_with_box = image.copy()
+
+        # Draw the bounding box on the image
+        cv2.rectangle(img_with_box, (x, y), (x + w, y + h), (0, 255, 0), 2)
+
+        return img_with_box
+
+    def display_image(self, image):
+        """
+        Displays the provided image using matplotlib.
+
+        Parameters:
+        -----------
+        image : numpy.ndarray
+            The image to display.
+        """
+        # Convert BGR to RGB for displaying with matplotlib
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        plt.imshow(img_rgb)
+        plt.axis('off')  # Hide axes
+        plt.show()
+
+
+# Example usage:
+if __name__ == "__main__":
+    # List of image file paths
+    image_list = ['/content/4428_gen_0.png', '/content/4428_gen_1.png',
+                  '/content/4428_gen_2.png', '/content/4428_gen_3.png', 
+                  '/content/4428_gen_4.png']
+
+    # Create an instance of the BoundingBoxFinder
+    bbox_finder = BoundingBoxFinder(image_list)
+
+    # Find the common bounding boxes
+    common_bboxes = bbox_finder.find_common_regions()
+
+    # Limit to the top bounding boxes based on area
+    max_boxes_to_display = 5  # Set the desired maximum number of boxes
+    top_bboxes = bbox_finder.get_top_bounding_boxes(common_bboxes, max_boxes_to_display)
+
+    if top_bboxes:
+        print(f"Top bounding boxes: {top_bboxes}")
+
+        # Get the first image
+        first_image = bbox_finder.images[0]
+
+        # Draw the bounding boxes on the first image
+        img_with_bboxes = first_image.copy()
+        for bbox in top_bboxes:
+            img_with_bboxes = bbox_finder.get_bounding_box_on_image(img_with_bboxes, bbox)
+
+        # Display the image with the bounding boxes
+        bbox_finder.display_image(img_with_bboxes)
+    else:
+        print("No common region found between the images.")
